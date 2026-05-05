@@ -3,6 +3,7 @@ package proxy
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/clawvisor/clawvisor/pkg/config"
 	"github.com/clawvisor/clawvisor/pkg/store"
@@ -14,6 +15,22 @@ type sessionRuntimeSettings struct {
 	StarterProfile         string `json:"starter_profile"`
 	OutboundCredentialMode string `json:"outbound_credential_mode"`
 	InjectStoredBearer     bool   `json:"inject_stored_bearer"`
+
+	// Phase 0.6: per-session overrides for fields previously sourced
+	// only from cfg.RuntimePolicy. Cloud realizes these from per-org
+	// policy at session-create time; daemon mode leaves them zero and
+	// the accessors fall back to the global cfg value.
+	//
+	// HarnessAllowlist uses *[]string so a tenant can explicitly express
+	// "empty allowlist" — i.e. the override is `[]`, which means only
+	// the built-in defaults (api.anthropic.com etc.) and cfg.LLM.Endpoint
+	// pass. A `nil` pointer means "no override; use cfg." Without the
+	// pointer, an empty slice is indistinguishable from absent in JSON
+	// round-trips, and the allowlist override silently degrades to the
+	// global cfg.
+	InlineApprovalEnabled   *bool     `json:"inline_approval_enabled,omitempty"`
+	ToolLeaseTimeoutSeconds int       `json:"tool_lease_timeout_seconds,omitempty"`
+	HarnessAllowlist        *[]string `json:"harness_allowlist,omitempty"`
 }
 
 func mergedAgentRuntimeSettings(agent *store.Agent, cfg *config.Config) sessionRuntimeSettings {
@@ -62,6 +79,15 @@ func sessionRuntimeSettingsFromMetadata(session *store.RuntimeSession, cfg *conf
 	if hasMetadataBool(session.MetadataJSON, "inject_stored_bearer") {
 		settings.InjectStoredBearer = parsed.InjectStoredBearer
 	}
+	if parsed.InlineApprovalEnabled != nil {
+		settings.InlineApprovalEnabled = parsed.InlineApprovalEnabled
+	}
+	if parsed.ToolLeaseTimeoutSeconds > 0 {
+		settings.ToolLeaseTimeoutSeconds = parsed.ToolLeaseTimeoutSeconds
+	}
+	if parsed.HarnessAllowlist != nil {
+		settings.HarnessAllowlist = parsed.HarnessAllowlist
+	}
 	return settings
 }
 
@@ -80,6 +106,42 @@ func sessionAutovaultMode(session *store.RuntimeSession, cfg *config.Config) str
 func sessionShouldInjectStoredBearer(session *store.RuntimeSession, cfg *config.Config) bool {
 	settings := sessionRuntimeSettingsFromMetadata(session, cfg)
 	return settings.InjectStoredBearer
+}
+
+// sessionInlineApprovalEnabled returns whether inline approval is enabled
+// for this session. Per-session override (when set) wins; otherwise falls
+// back to cfg.RuntimePolicy.InlineApprovalEnabled.
+func sessionInlineApprovalEnabled(session *store.RuntimeSession, cfg *config.Config) bool {
+	settings := sessionRuntimeSettingsFromMetadata(session, cfg)
+	if settings.InlineApprovalEnabled != nil {
+		return *settings.InlineApprovalEnabled
+	}
+	return cfg != nil && cfg.RuntimePolicy.InlineApprovalEnabled
+}
+
+// sessionToolLeaseTTL returns the lease TTL for this session. Per-session
+// override (positive value) wins; otherwise falls back to cfg.
+func sessionToolLeaseTTL(session *store.RuntimeSession, cfg *config.Config) time.Duration {
+	settings := sessionRuntimeSettingsFromMetadata(session, cfg)
+	if settings.ToolLeaseTimeoutSeconds > 0 {
+		return time.Duration(settings.ToolLeaseTimeoutSeconds) * time.Second
+	}
+	return toolLeaseTTL(cfg)
+}
+
+// sessionHarnessAllowlist returns the harness allowlist for this session.
+// A non-nil per-session override wins (including an explicit empty list,
+// which means "deny everything except the built-in defaults"). A nil
+// override falls back to cfg.RuntimePolicy.HarnessAllowlist.
+func sessionHarnessAllowlist(session *store.RuntimeSession, cfg *config.Config) []string {
+	settings := sessionRuntimeSettingsFromMetadata(session, cfg)
+	if settings.HarnessAllowlist != nil {
+		return *settings.HarnessAllowlist
+	}
+	if cfg == nil {
+		return nil
+	}
+	return cfg.RuntimePolicy.HarnessAllowlist
 }
 
 func firstNonEmptyLower(values ...string) string {
