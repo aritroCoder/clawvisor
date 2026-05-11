@@ -49,8 +49,8 @@ Clawvisor is an AI agent gatekeeper service. Backend: Go 1.25 (`net/http`). Fron
 | Task | Location | Notes |
 |------|----------|-------|
 | Add a service adapter | `internal/adapters/` | Implement Adapter interface from `pkg/adapters/` |
-| Add an API endpoint | `internal/api/handlers/` | Wire in `internal/api/routes.go` |
-| Change database schema | `pkg/store/sqlite/migrations/`, `pkg/store/postgres/migrations/` | Add up+down SQL |
+| Add an API endpoint | `internal/api/handlers/` | Wire in `internal/api/server.go` (`routes()` method) |
+| Change database schema | `pkg/store/sqlite/migrations/`, `pkg/store/postgres/migrations/` | Add forward-only `.sql` file (no up/down sections — runner executes entire file) |
 | Change frontend UI | `web/src/` | React + Tailwind + Vite |
 | Change agent protocol | `skills/clawvisor/SKILL.md.tmpl` | Run `make eval-intent` after |
 | Add LLM eval case | `internal/intent/testdata/eval_cases.json` | Run `make eval-intent` |
